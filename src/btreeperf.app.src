@@ -1,0 +1,14 @@
+{application, btreeperf,
+ [
+  {description, "btree performance"},
+  {vsn, "1"},
+  {modules, []},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib
+                 ]},
+  {included_applications, [basho_bench]},
+  {mod, { btreeperf_app, []}},
+  {env, []}
+ ]}.

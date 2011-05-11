@@ -1,0 +1,6 @@
+.DS_Store
+src/.#*
+erl_crash.dump
+deps
+ebin
+tests
