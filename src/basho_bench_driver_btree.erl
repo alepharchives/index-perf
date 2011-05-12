@@ -9,10 +9,9 @@
 -include_lib("basho_bench/include/basho_bench.hrl").
 -include_lib("kernel/include/file.hrl").
 
--record(state, { file,
-                 batch_size = 1,
+-record(state, { batch_size = 1,
                  btree,
-                 writer
+                 writer = false
                   }).
 
 new(Id) ->
@@ -31,7 +30,8 @@ new(Id) ->
              _ -> false
              end,
     Btree1 = couch_btree:set_options(Btree, [{chunk_size, ChunkSize}]),
-    {ok, #state { file = Fd, batch_size = BatchSize,
+
+    {ok, #state { batch_size = BatchSize,
                   btree = Btree1, writer = Writer  }}.
 
 
