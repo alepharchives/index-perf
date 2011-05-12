@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript --vanilla
 
-source("priv/common.r")
+source("common.r")
 
 # Setup parameters for the script
 params = matrix(c(
