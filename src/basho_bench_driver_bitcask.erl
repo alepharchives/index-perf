@@ -27,8 +27,6 @@
 -include("basho_bench.hrl").
 
 -record(state, { file,
-                 sync_interval,
-                 last_sync,
                   writer}).
 
 %% ====================================================================
@@ -56,24 +54,17 @@ new(Id) ->
     Dir = basho_bench_config:get(bitcask_dir, "."),
     Filename = filename:join(Dir, "test.bitcask"),
 
-    %% Look for sync interval config
-    case basho_bench_config:get(bitcask_sync_interval, infinity) of
-        Value when is_integer(Value) ->
-            SyncInterval = Value;
-        infinity ->
-            SyncInterval = infinity
-    end,
+
 
     %% Get any bitcask flags
     Flags = basho_bench_config:get(bitcask_flags, []),
     case Writer of
     true ->
-        case bitcask:open(Filename, [read_write] ++ Flags) of
+        case bitcask:open(Filename, [read_write, sync_on_put] ++ Flags) of
         {error, Reason} ->
             ?FAIL_MSG("Failed to open bitcask in ~s: ~p\n", [Filename, Reason]);
         File ->
-            {ok, #state { file = File, sync_interval = SyncInterval,
-                          last_sync = os:timestamp(), writer=Writer }}
+            {ok, #state { file = File, writer=Writer }}
         end;
     false ->
         case bitcask:open(Filename, Flags) of
@@ -87,55 +78,35 @@ new(Id) ->
 
 
 run(get, KeyGen, _ValueGen, State) ->
-    State1 = maybe_sync(State),
-    case bitcask:get(State1#state.file, KeyGen()) of
+    case bitcask:get(State#state.file, KeyGen()) of
         {ok, _Value} ->
-            {ok, State1};
+            {ok, State};
         not_found ->
-            {ok, State1};
+            {ok, State};
         {error, Reason} ->
             {error, Reason}
     end;
 run(put, KeyGen, ValueGen, #state{writer=Writer} = State) ->
-    State1 = maybe_sync(State),
     if Writer ->
-        case bitcask:put(State1#state.file, KeyGen(), ValueGen()) of
+        case bitcask:put(State#state.file, KeyGen(), ValueGen()) of
         ok ->
-            {ok, State1};
+            {ok, State};
         {error, Reason} ->
             {error, Reason}
         end;
     true ->
-        {ok, State1}
+        {ok, State}
     end;
 run(delete, KeyGen, _ValueGen, #state{writer=Writer}=State) ->
-    State1 = maybe_sync(State),
     if Writer ->
-        case bitcask:delete(State1#state.file, KeyGen()) of
+        case bitcask:delete(State#state.file, KeyGen()) of
         ok ->
-            {ok, State1};
+            {ok, State};
         {error, Reason} ->
             {error, Reason}
         end;
      true ->
-        {ok, State1}
+        {ok, State}
     end.
 
 
-
-
-maybe_sync(#state { sync_interval = infinity } = State) ->
-    State;
-maybe_sync(#state { sync_interval = SyncInterval, writer = Writer } = State) ->
-    if Writer ->
-        Now = os:timestamp(),
-        case timer:now_diff(Now, State#state.last_sync) / 1000000 of
-        Value when Value >= SyncInterval ->
-            bitcask:sync(State#state.file),
-            State#state { last_sync = Now };
-        _ ->
-            State
-        end;
-    true ->
-        State
-    end.
