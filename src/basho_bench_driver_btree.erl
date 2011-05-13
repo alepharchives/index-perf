@@ -14,27 +14,56 @@
                  writer = false
                   }).
 
+writer(Bt0) ->
+    receive
+        {From, {put, KVs}} ->
+            {ok, Bt1} = couch_btree:add_remove(Bt0, KVs, []),
+            From ! {ok, Bt1},
+            writer(Bt1);
+        {From, {delete, Key}} ->
+            {ok, Bt1} = couch_btree:add_remove(Bt0, [], [Key]),
+            From ! {ok, Bt1},
+            writer(Bt1)
+    end.
+
 new(Id) ->
-    {ok, Fd} = case couch_file:open("foo",[]) of
-               {error, enoent} ->
-                   couch_file:open("foo",[create]);
-               {ok, File} ->
-                   {ok, File}
-               end,
-    {ok, Btree} = couch_btree:open(nil, Fd),
     ChunkSize = basho_bench_config:get(chunk_size, 1279),
     BatchSize = basho_bench_config:get(batch_size, 1),
-    NoWorkers = basho_bench_config:get(concurrent, 1),
-    Writer = case Id of
-             NoWorkers -> true;
-             _ -> false
-             end,
+
+    {ok, Fd} = case couch_file:open("foo",[]) of
+        {error, enoent} ->
+            couch_file:open("foo",[create]);
+        {ok, File} ->
+            {ok, File}
+    end,
+
+    {ok, Btree} = couch_btree:open(nil, Fd),
     Btree1 = couch_btree:set_options(Btree, [{chunk_size, ChunkSize}]),
+    
+    Writer = case {whereis(btree_writer), Id} of
+        {Pid, _} when is_pid(Pid) ->
+            Pid;
+        {_, 1} ->
+            Pid = spawn(fun() -> writer(Btree) end),
+            register(btree_writer, Pid),
+            Pid;
+        _ ->
+            get_writer(9)
+    end,
 
     {ok, #state { batch_size = BatchSize,
                   btree = Btree1, writer = Writer  }}.
 
-
+get_writer(0) ->
+    exit(no_btree_writer_found);
+get_writer(N) ->
+    case whereis(btree_writer) of
+        Pid when is_pid(Pid) ->
+            Pid;
+        _ ->
+            timer:sleep(333),
+            get_writer(N-1)
+    end.
 
 run(get, KeyGen, _ValueGen, State) ->
     #state{btree=Bt} = State,
@@ -49,23 +78,24 @@ run(get, KeyGen, _ValueGen, State) ->
     end;
 
 run(put, KeyGen, ValueGen, State) ->
-    #state{btree=Bt, batch_size = BatchSize, writer = Writer} = State,
-    if Writer ->
-        KeyVals = gen_key_vals(KeyGen, ValueGen, BatchSize, []),
-        {ok, NBt} = couch_btree:add_remove(Bt,KeyVals,[]),
-        {ok, State#state{btree=NBt}};
-    true ->
-        {ok, State}
+    #state{batch_size = BatchSize, writer = Writer} = State,
+    KeyVals = gen_key_vals(KeyGen, ValueGen, BatchSize, []),
+    Writer ! {self(), {put, KeyVals}},
+    receive
+        {ok, NBt} ->
+            {ok, State#state{btree=NBt}}
+    after 5000 ->
+        exit(write_timeout)
     end;
 
 run(delete, KeyGen, _ValueGen, State) ->
-    #state{btree=Bt, writer = Writer} = State,
-    if Writer ->
-        Key = KeyGen(),
-        {ok, NBt} = couch_btree:add_remove(Bt,[],[Key]),
-        {ok, State#state{btree=NBt}};
-    true ->
-        {ok, State}
+    #state{writer = Writer} = State,
+    Writer ! {self(), {delete, KeyGen()}},
+    receive
+        {ok, NBt} ->
+            {ok, State#state{btree=NBt}}
+    after 5000 ->
+        exit(write_timeout)
     end.
 
 gen_key_vals(_KeyGen, _ValueGen, 0, KeyVals) ->
