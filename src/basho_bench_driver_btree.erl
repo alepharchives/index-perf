@@ -14,8 +14,25 @@
                  writer = false
                   }).
 
+writer_init(ChunkSize) ->
+    {ok, Db} = erleveldb:open_db("foo", [create_if_missing]),
+
+    % {ok, Fd} = case couch_file:open("foo",[]) of
+    %     {error, enoent} ->
+    %         couch_file:open("foo",[create]);
+    %     {ok, File} ->
+    %         {ok, File}
+    % end,
+
+    {ok, Btree} = couch_btree:open(nil, Db),
+    Btree1 = couch_btree:set_options(Btree, [{chunk_size, ChunkSize}]),
+    writer(Btree1).
+    
 writer(Bt0) ->
     receive
+        {From, getdb} ->
+            From ! {ok, Bt0},
+            writer(Bt0);
         {From, {put, KVs}} ->
             {ok, Bt1} = couch_btree:add_remove(Bt0, KVs, []),
             From ! {ok, Bt1},
@@ -30,31 +47,22 @@ new(Id) ->
     ChunkSize = basho_bench_config:get(chunk_size, 1279),
     BatchSize = basho_bench_config:get(batch_size, 1),
 
-    {ok, Db} = erleveldb:open_db("foo", [create_if_missing]),
-
-    % {ok, Fd} = case couch_file:open("foo",[]) of
-    %     {error, enoent} ->
-    %         couch_file:open("foo",[create]);
-    %     {ok, File} ->
-    %         {ok, File}
-    % end,
-
-    {ok, Btree} = couch_btree:open(nil, Db),
-    Btree1 = couch_btree:set_options(Btree, [{chunk_size, ChunkSize}]),
-    
     Writer = case {whereis(btree_writer), Id} of
         {Pid, _} when is_pid(Pid) ->
             Pid;
         {_, 1} ->
-            Pid = spawn(fun() -> writer(Btree) end),
+            Pid = spawn(fun() -> writer_init(ChunkSize) end),
             register(btree_writer, Pid),
             Pid;
         _ ->
             get_writer(9)
     end,
-
-    {ok, #state { batch_size = BatchSize,
-                  btree = Btree1, writer = Writer  }}.
+    
+    Writer ! {self(), getdb},
+    receive
+        {ok, Bt} -> {ok, #state{batch_size=BatchSize, btree=Bt, writer=Writer}};
+        _ -> exit(bad_mesg)
+    end.
 
 get_writer(0) ->
     exit(no_btree_writer_found);
