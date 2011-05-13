@@ -18,6 +18,7 @@
 
 -record(btree,
     {fd,
+    counter=0,
     root,
     chunk_size = 1279,
     extract_kv,
@@ -339,26 +340,24 @@ reduce_node(#btree{reduce=R}, kp_node, NodeList) ->
 reduce_node(#btree{reduce=R}=Bt, kv_node, NodeList) ->
     R(reduce, [assemble(Bt, K, V) || {K, V} <- NodeList]).
 
+    
+get_node(#btree{fd = Db}, NodePos) ->
+    {ok, Bin} = erleveldb:get(Db, integer_to_list(NodePos)),
+    binary_to_term(Bin).
 
-get_node(#btree{fd = Fd}, NodePos) ->
-    {ok, {NodeType, NodeList}} = couch_file:pread_term(Fd, NodePos),
-    {NodeType, NodeList}.
-
-write_node(Bt, NodeType, NodeList) ->
+write_node(#btree{fd=Db, counter=Counter}=Bt, NodeType, NodeList) ->
     % split up nodes into smaller sizes
     NodeListList = chunkify(NodeList, Bt#btree.chunk_size),
     %%io:format("length of chunk list to write ~p ~n",[length(NodeListList)]),
     % now write out each chunk and return the KeyPointer pairs for those nodes
-    ResultList = [
-        begin
-            {ok, Pointer} = couch_file:append_term(Bt#btree.fd, {NodeType, ANodeList}),
-            {LastKey, _} = lists:last(ANodeList),
-            {LastKey, {Pointer, reduce_node(Bt, NodeType, ANodeList)}}
-        end
-    ||
-        ANodeList <- NodeListList
-    ],
-    {ok, ResultList, Bt}.
+    {ResultList, Counter2} = lists:foldl(fun(ANodeList, {Res, C}) ->
+        Bin = term_to_binary({NodeType, ANodeList}),
+        ok = erleveldb:put(Db, integer_to_list(C), Bin),
+        {LastKey, _} = lists:last(ANodeList),
+        Res2 = [{LastKey, {C, reduce_node(Bt, NodeType, ANodeList)}} | Res],
+        {Res2, C+1}
+    end, {[], Counter}, NodeListList),
+    {ok, lists:reverse(ResultList), Bt#btree{counter=Counter2}}.
 
 modify_kpnode(Bt, {}, _LowerBound, Actions, [], QueryOutput) ->
     modify_node(Bt, nil, Actions, QueryOutput);

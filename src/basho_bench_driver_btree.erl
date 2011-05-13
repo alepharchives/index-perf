@@ -30,14 +30,16 @@ new(Id) ->
     ChunkSize = basho_bench_config:get(chunk_size, 1279),
     BatchSize = basho_bench_config:get(batch_size, 1),
 
-    {ok, Fd} = case couch_file:open("foo",[]) of
-        {error, enoent} ->
-            couch_file:open("foo",[create]);
-        {ok, File} ->
-            {ok, File}
-    end,
+    {ok, Db} = erleveldb:open_db("foo", [create_if_missing]),
 
-    {ok, Btree} = couch_btree:open(nil, Fd),
+    % {ok, Fd} = case couch_file:open("foo",[]) of
+    %     {error, enoent} ->
+    %         couch_file:open("foo",[create]);
+    %     {ok, File} ->
+    %         {ok, File}
+    % end,
+
+    {ok, Btree} = couch_btree:open(nil, Db),
     Btree1 = couch_btree:set_options(Btree, [{chunk_size, ChunkSize}]),
     
     Writer = case {whereis(btree_writer), Id} of
