@@ -15,7 +15,8 @@
                   }).
 
 writer_init(ChunkSize) ->
-    {ok, Db} = erleveldb:open_db("foo", [create_if_missing]),
+    Opts = [create_if_missing, {max_open_files, 50}],
+    {ok, Db} = erleveldb:open_db("foo", Opts),
 
     % {ok, Fd} = case couch_file:open("foo",[]) of
     %     {error, enoent} ->
